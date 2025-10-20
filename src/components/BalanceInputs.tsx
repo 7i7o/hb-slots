@@ -28,15 +28,8 @@ export function BalanceInputs({
   return (
     <Card className="p-6">
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          {/* <div>
-            <h2 className="text-lg font-semibold">Balance Checker</h2>
-            <p className="text-sm text-muted-foreground">
-              Compare token balances across HB nodes and CUs
-            </p>
-          </div> */}
-
-          <div className="grid gap-4 md:grid-cols-2">
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="grid gap-4 md:grid-cols-2 flex-1">
             <div className="space-y-2">
               <label className="text-sm font-medium">Token Process ID</label>
               <Input
@@ -66,11 +59,11 @@ export function BalanceInputs({
           </div>
 
           <Button
+          className="w-full md:w-auto md:mt-6"
             onClick={handleSave}
             disabled={!inputToken.trim() || !inputWallet.trim()}
           >
-            <Save className="w-4 h-4 mr-2" />
-            Save
+            <Save className="w-4 h-4" />
           </Button>
         </div>
       </div>
