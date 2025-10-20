@@ -1,6 +1,14 @@
+export interface TokenInfo {
+  logo: string | null;
+  ticker: string | null;
+  name: string | null;
+  denomination: number | null;
+}
+
 export interface BalanceResult {
   source: string;
   balance: string | null;
+  tokenInfo: TokenInfo | null;
   loading: boolean;
   error: string | null;
 }

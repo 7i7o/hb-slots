@@ -10,9 +10,26 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { RefreshCw, Share2 } from 'lucide-react';
-import type { HBNode, CUNode, BalanceResult } from '@/types/balance';
+import type { HBNode, CUNode, BalanceResult, TokenInfo } from '@/types/balance';
 import { toast } from 'sonner';
 import { connect } from '@permaweb/aoconnect';
+
+// Format balance with proper decimals
+function formatBalance(balance: string | null, denomination: number | null): string {
+  if (!balance || balance === 'N/A') return balance || 'N/A';
+  if (!denomination) return balance;
+  
+  try {
+    const num = parseFloat(balance);
+    if (isNaN(num)) return balance;
+    
+    const divisor = Math.pow(10, denomination);
+    const formatted = (num / divisor).toString();
+    return formatted;
+  } catch {
+    return balance;
+  }
+}
 
 interface BalanceResultsProps {
   tokenProcessId: string;
@@ -50,12 +67,14 @@ export function BalanceResults({
       ...hbNodes.map(node => ({
         source: `HB: ${node.url}`,
         balance: null,
+        tokenInfo: null,
         loading: true,
         error: null
       })),
       ...cuNodes.map(node => ({
         source: `CU: ${node.url}`,
         balance: null,
+        tokenInfo: null,
         loading: true,
         error: null
       }))
@@ -66,23 +85,54 @@ export function BalanceResults({
     // Fetch from HB nodes
     const hbPromises = hbNodes.map(async (node, index) => {
       try {
-        const url = `${node.url}/${tokenProcessId}~process@1.0/compute/balances/${wallet}`;
-        const response = await fetch(url);
+        const baseUrl = `${node.url}/${tokenProcessId}~process@1.0/compute`;
         
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
+        // Fetch balance and token info in parallel
+        const [balanceResponse, tokenInfoResponse] = await Promise.allSettled([
+          fetch(`${baseUrl}/balances/${wallet}`),
+          fetch(`${baseUrl}/token-info?require-codec=application/json&accept-bundle=true`)
+        ]);
+
+        let balance = null;
+        const tokenInfo: TokenInfo = {
+          logo: null,
+          ticker: null,
+          name: null,
+          denomination: null
+        };
+
+        if (balanceResponse.status === 'fulfilled' && balanceResponse.value.ok) {
+          const data = await balanceResponse.value.json();
+          balance = String(data.balance || data);
         }
 
-        const data = await response.json();
-        const balance = data.balance || data;
+        if (tokenInfoResponse.status === 'fulfilled' && tokenInfoResponse.value.ok) {
+          const response = await tokenInfoResponse.value.json();
+          
+          // Token info is nested inside 'body' property
+          const info = response.body || response;
+          
+          // Logo is an Arweave TX ID, prepend the gateway URL
+          if (info.logo || info.Logo) {
+            const logoTxId = info.logo || info.Logo;
+            tokenInfo.logo = `https://arweave.net/${logoTxId}`;
+          }
+          
+          tokenInfo.ticker = info.ticker || info.Ticker || null;
+          tokenInfo.name = info.name || info.Name || null;
+          
+          const denom = info.denomination || info.Denomination;
+          tokenInfo.denomination = denom ? parseInt(String(denom)) : null;
+        }
 
         setResults(prev => {
           const newResults = [...prev];
           newResults[index] = {
             source: `HB: ${node.url}`,
-            balance: String(balance),
+            balance,
+            tokenInfo,
             loading: false,
-            error: null
+            error: balanceResponse.status === 'rejected' ? 'Failed to fetch balance' : null
           };
           return newResults;
         });
@@ -92,6 +142,7 @@ export function BalanceResults({
           newResults[index] = {
             source: `HB: ${node.url}`,
             balance: null,
+            tokenInfo: null,
             loading: false,
             error: error instanceof Error ? error.message : 'Failed to fetch'
           };
@@ -105,25 +156,66 @@ export function BalanceResults({
       try {
         const { dryrun } = connect({ MODE: 'legacy', CU_URL: node.url });
         
-        const result = await dryrun({
-          process: tokenProcessId,
-          tags: [
-            { name: 'Action', value: 'Balance' },
-            { name: 'Recipient', value: wallet }
-          ],
-        });
+        // Fetch balance and token info in parallel
+        const [balanceResult, infoResult] = await Promise.allSettled([
+          dryrun({
+            process: tokenProcessId,
+            tags: [
+              { name: 'Action', value: 'Balance' },
+              { name: 'Recipient', value: wallet }
+            ],
+          }),
+          dryrun({
+            process: tokenProcessId,
+            tags: [
+              { name: 'Action', value: 'Info' }
+            ],
+          })
+        ]);
 
-        let balance = 'N/A';
+        let balance: string | null = null;
+        const tokenInfo: TokenInfo = {
+          logo: null,
+          ticker: null,
+          name: null,
+          denomination: null
+        };
         
-        // Try to extract balance from response
-        if (result.Messages && result.Messages.length > 0) {
-          const balanceTag = result.Messages[0].Tags?.find((tag: any) => 
-            tag.name === 'Balance' || tag.name === 'balance'
-          );
-          if (balanceTag) {
-            balance = balanceTag.value;
-          } else if (result.Messages[0].Data) {
-            balance = result.Messages[0].Data;
+        // Extract balance from response
+        if (balanceResult.status === 'fulfilled') {
+          const result = balanceResult.value;
+          if (result.Messages && result.Messages.length > 0) {
+            const balanceTag = result.Messages[0].Tags?.find((tag: any) => 
+              tag.name === 'Balance' || tag.name === 'balance'
+            );
+            if (balanceTag) {
+              balance = balanceTag.value;
+            } else if (result.Messages[0].Data) {
+              balance = result.Messages[0].Data;
+            }
+          }
+        }
+
+        // Extract token info from response
+        if (infoResult.status === 'fulfilled') {
+          const result = infoResult.value;
+          if (result.Messages && result.Messages.length > 0) {
+            const tags = result.Messages[0].Tags || [];
+            
+            const logoTag = tags.find((tag: any) => tag.name === 'Logo');
+            if (logoTag) {
+              // Logo is an Arweave TX ID, prepend the gateway URL
+              tokenInfo.logo = `https://arweave.net/${logoTag.value}`;
+            }
+            
+            const tickerTag = tags.find((tag: any) => tag.name === 'Ticker');
+            if (tickerTag) tokenInfo.ticker = tickerTag.value;
+            
+            const nameTag = tags.find((tag: any) => tag.name === 'Name');
+            if (nameTag) tokenInfo.name = nameTag.value;
+            
+            const denomTag = tags.find((tag: any) => tag.name === 'Denomination');
+            if (denomTag) tokenInfo.denomination = parseInt(denomTag.value) || null;
           }
         }
 
@@ -132,8 +224,9 @@ export function BalanceResults({
           newResults[hbNodes.length + index] = {
             source: `CU: ${node.url}`,
             balance,
+            tokenInfo,
             loading: false,
-            error: null
+            error: balanceResult.status === 'rejected' ? 'Failed to fetch balance' : null
           };
           return newResults;
         });
@@ -143,6 +236,7 @@ export function BalanceResults({
           newResults[hbNodes.length + index] = {
             source: `CU: ${node.url}`,
             balance: null,
+            tokenInfo: null,
             loading: false,
             error: error instanceof Error ? error.message : 'Failed to fetch'
           };
@@ -203,6 +297,7 @@ export function BalanceResults({
               <TableRow>
                 <TableHead className="text-center">Source</TableHead>
                 <TableHead className="text-center">Balance</TableHead>
+                <TableHead className="text-center">Token</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -217,7 +312,35 @@ export function BalanceResults({
                     ) : result.error ? (
                       <span className="text-destructive">{result.error}</span>
                     ) : (
-                      <span className="font-mono">{result.balance}</span>
+                      <span className="font-mono">
+                        {formatBalance(result.balance, result.tokenInfo?.denomination || null)}
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    {result.loading ? (
+                      <span className="text-muted-foreground">Loading...</span>
+                    ) : result.tokenInfo ? (
+                      <div className="flex items-center justify-center gap-2">
+                        {result.tokenInfo.logo && (
+                          <img 
+                            src={result.tokenInfo.logo} 
+                            alt={result.tokenInfo.ticker || 'Token'} 
+                            className="w-6 h-6 rounded-full"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                        )}
+                        {result.tokenInfo.ticker && (
+                          <span className="font-semibold">{result.tokenInfo.ticker}</span>
+                        )}
+                        {!result.tokenInfo.logo && !result.tokenInfo.ticker && (
+                          <span className="text-muted-foreground">N/A</span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">N/A</span>
                     )}
                   </TableCell>
                 </TableRow>
