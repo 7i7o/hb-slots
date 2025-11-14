@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { SyncMonitor } from '@/pages/SyncMonitor';
 import { BalanceChecker } from '@/pages/BalanceChecker';
+import { CodeDownloader } from '@/components/CodeDownloader';
 import { Toaster } from '@/components/ui/sonner';
 import { Button } from '@/components/ui/button';
-import { Activity, Wallet } from 'lucide-react';
+import { Activity, Wallet, Code } from 'lucide-react';
 
-type Page = 'sync' | 'balance';
+type Page = 'sync' | 'balance' | 'code';
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('sync');
@@ -48,11 +49,21 @@ function App() {
               <Wallet className="w-4 h-4" />
               Balance Checker
             </Button>
+            <Button
+              variant={currentPage === 'code' ? 'default' : 'ghost'}
+              onClick={() => handlePageChange('code')}
+              className="gap-2"
+            >
+              <Code className="w-4 h-4" />
+              Code Downloader
+            </Button>
           </div>
         </div>
       </nav>
 
-      {currentPage === 'sync' ? <SyncMonitor /> : <BalanceChecker />}
+      {currentPage === 'sync' && <SyncMonitor />}
+      {currentPage === 'balance' && <BalanceChecker />}
+      {currentPage === 'code' && <CodeDownloader />}
       
       <Toaster />
     </div>
